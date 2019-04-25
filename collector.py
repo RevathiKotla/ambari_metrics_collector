@@ -1,11 +1,14 @@
 import json
 import yaml
 import re
+import time
+from prometheus_client import start_http_server
+from prometheus_client.core import GaugeMetricFamily, REGISTRY
 
 
 class AmbariMetricCollector(object):
     def __init__(self):
-        pass
+        self.prom_metrics = {}
 
     def _parse_metrics(self, metrics, prefix, acc):
         for k, v in metrics.items():
@@ -15,8 +18,10 @@ class AmbariMetricCollector(object):
                 if len(prefix) > 0:
                     prefix.pop(len(prefix) - 1)
             else:
-                metric_name = '{}_{}'.format('.'.join(prefix), k)
-                acc[metric_name] = v
+                metric_name = '{}_{}'.format('_'.join(prefix), k)
+
+                if type(v) is int or type(v) is float:
+                    acc[metric_name] = v
 
     def _is_label_black_list(self, labels, labels_bl):
         for k, vs in labels_bl.items():
@@ -64,7 +69,7 @@ class AmbariMetricCollector(object):
 
         return None, None
 
-    def collect(self, metric_file, black_list_file):
+    def _collect(self, metric_file, black_list_file):
         with open(metric_file, "r") as read_metric_file:
             data = json.load(read_metric_file)
 
@@ -77,11 +82,29 @@ class AmbariMetricCollector(object):
                 labels, metrics = self._parse(item, labels_bl, metrics_bl)
 
                 if metrics:
-                    print(labels)
-                    print(metrics)
+                    for k, v in metrics.items():
+                        prom_metric = self.prom_metrics.get(k, None)
+
+                        if not prom_metric:
+                            prom_metric = GaugeMetricFamily(k, k, labels=['cluster_name', 'component_name', 'host_name'])
+                            self.prom_metrics[k] = prom_metric
+
+                        prom_metric.add_metric(list(labels.values()), v)
+
+                        yield prom_metric
+
+    def collect(self):
+        return self._collect('conf/ambari-metrics-host-component.json',
+                             'conf/black_list.yaml')
 
 
 if __name__ == "__main__":
     collector = AmbariMetricCollector()
-    collector.collect('/Users/macbookpro/Downloads/ambari-metrics-host-component.json',
-                      '/Users/macbookpro/Downloads/black_list.yaml')
+    # Just for debug
+    # for i in collector.collect():
+    #     print(i)
+
+    REGISTRY.register(collector)
+    start_http_server(9999)
+    while True:
+        time.sleep(1)
