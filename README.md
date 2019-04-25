@@ -24,4 +24,24 @@ python collector.py
 python collector.py
 curl -v localhost:<user-defined-port>
 ``` 
+## Integrate with Prometheus docker
+- Pull the docker image prom/prometheus
+```bash
+docker run --name prom --init -p 9090:9090 -d prom/prometheus
+```
+- ssh into the docker container
+```bash
+docker ps -a
+docker exec -it <container-pid> \bin\sh
+```
+- [Get the host ip](https://biancatamayo.me/blog/2017/11/03/docker-add-host-ip/)
+
+For mac only using
+```bash
+ping docker.for.mac.localhost
+```
+- Change scrape_configs targets value in /etc/prometheus/prometheus.yml
+- Restart the container
+
+
 
