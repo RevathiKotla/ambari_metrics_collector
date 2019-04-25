@@ -7,8 +7,13 @@ from prometheus_client.core import GaugeMetricFamily, REGISTRY
 
 
 class AmbariMetricCollector(object):
-    def __init__(self):
+    def __init__(self, black_list_file):
         self.prom_metrics = {}
+
+        with open(black_list_file, "r") as read_bl_file:
+            bl_conf = yaml.load(read_bl_file)
+
+        self.metrics_bl, self.labels_bl = self._parse_black_list(bl_conf)
 
     def _parse_metrics(self, metrics, prefix, acc):
         for k, v in metrics.items():
@@ -69,17 +74,13 @@ class AmbariMetricCollector(object):
 
         return None, None
 
-    def _collect(self, metric_file, black_list_file):
+    def _collect(self, metric_file):
         with open(metric_file, "r") as read_metric_file:
             data = json.load(read_metric_file)
 
-        with open(black_list_file, "r") as read_bl_file:
-            bl_conf = yaml.load(read_bl_file)
-
-        metrics_bl, labels_bl = self._parse_black_list(bl_conf)
         for item in data['items']:
             if item.get('metrics', None):
-                labels, metrics = self._parse(item, labels_bl, metrics_bl)
+                labels, metrics = self._parse(item, self.labels_bl, self.metrics_bl)
 
                 if metrics:
                     for k, v in metrics.items():
@@ -91,15 +92,14 @@ class AmbariMetricCollector(object):
 
                         prom_metric.add_metric(list(labels.values()), v)
 
-                        yield prom_metric
-
     def collect(self):
-        return self._collect('conf/ambari-metrics-host-component.json',
-                             'conf/black_list.yaml')
+        self._collect('conf/ambari-metrics-host-component.json')
+        for m in list(self.prom_metrics.values()):
+            yield m
 
 
 if __name__ == "__main__":
-    collector = AmbariMetricCollector()
+    collector = AmbariMetricCollector('conf/black_list.yaml')
     # Just for debug
     # for i in collector.collect():
     #     print(i)
