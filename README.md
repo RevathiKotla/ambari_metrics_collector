@@ -78,7 +78,10 @@ docker run -d\
  hopsoft/graphite-statsd
  ```
 
- ## Run in PROD
+## View Metrics on Graphite UI
+![Graphite UI](graphite_ui.png)
+
+## Run in PROD
 ### 1. Create `prod.env`
  ```bash
 cp env/sample.prod.env env/prod.env
