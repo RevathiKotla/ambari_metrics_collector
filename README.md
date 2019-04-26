@@ -43,5 +43,66 @@ ping docker.for.mac.localhost
 - Change scrape_configs targets value in /etc/prometheus/prometheus.yml
 - Restart the container
 
+# USING WITH STATSD
+## Install required libs
+```bash
+pip install -r requirement.txt
+```  
 
+## Run local
+Load environment. Read `dev.env` to know about environment variables
+```bash
+source env/dev.env
+```  
 
+Start the collector by
+
+```bash
+python collector.py
+```  
+
+## Run local statsd
+- Document: https://github.com/hopsoft/docker-graphite-statsd
+- Using Graphite UI to view statsd data at [port 81](http://localhost:81)
+- Grafana run at [port 80](http://localhost)
+```bash
+docker run -d\
+ --name graphite\
+ --restart=always\
+ -p 80:80\
+ -p 81:81\
+ -p 2003-2004:2003-2004\
+ -p 2023-2024:2023-2024\
+ -p 8125:8125/udp\
+ -p 8126:8126\
+ hopsoft/graphite-statsd
+ ```
+
+ ## Run in PROD
+### 1. Create `prod.env`
+ ```bash
+cp env/sampleprod.env env/prod.env
+```
+
+### 2. Edit `prod.env`
+```
+export STATSD_HOST=localhost
+export STATSD_PORT=8125
+export STATSD_PREFIX=TELCOX
+export STATSD_MAXUDPSIZE=512
+
+export AMBARI_URI=https://localhost:8080
+export AMBARI_USER=user
+export AMBARI_PASS=pass
+
+export BATCH_DELAY=60
+
+export PYTHONWARNINGS="ignore:Unverified HTTPS request"
+```
+
+### 3. Run
+
+```bash
+source env/prod.env
+python collector.py
+``` 

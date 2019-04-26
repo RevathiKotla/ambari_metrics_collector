@@ -1,14 +1,39 @@
+import os
 import json
 import yaml
 import re
 import time
-from prometheus_client import start_http_server
-from prometheus_client.core import GaugeMetricFamily, REGISTRY
+import logging
+# from prometheus_client import start_http_server
+# from prometheus_client.core import GaugeMetricFamily, REGISTRY
+import requests
+
+LOGLEVEL = os.getenv('LOGLEVEL', 'INFO').upper()
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(message)s'
+    , datefmt='%m/%d/%Y %I:%M:%S %p'
+    , level=LOGLEVEL
+)
+
+try:
+    from statsd.defaults.env import statsd
+except Exception as e:
+    logging.error(e)
+
+DUMMY_INPUT_FILE = os.getenv('DUMMY_INPUT_FILE', 'dummy_data/ambari-metrics-host-component.json')
+BATCH_DELAY = os.getenv('BATCH_DELAY', 60)
+BLACK_LIST_FILE = 'conf/black_list.yaml'
 
 
 class AmbariMetricCollector(object):
     def __init__(self, black_list_file):
-        self.prom_metrics = {}
+        # self.prom_metrics = {}
+        self.statsd_metrics = {}
+        self.ambari_info = {
+            'AMBARI_URI': os.getenv('AMBARI_URI')
+            , 'AMBARI_USER': os.getenv('AMBARI_USER')
+            , 'AMBARI_PASS': os.getenv('AMBARI_PASS')
+        }
 
         with open(black_list_file, "r") as read_bl_file:
             bl_conf = yaml.load(read_bl_file)
@@ -23,7 +48,8 @@ class AmbariMetricCollector(object):
                 if len(prefix) > 0:
                     prefix.pop(len(prefix) - 1)
             else:
-                metric_name = '{}_{}'.format('_'.join(prefix), k)
+                # metric_name = '{}_{}'.format('_'.join(prefix), k)
+                metric_name = '{}.{}'.format('.'.join(prefix), k)
 
                 if type(v) is int or type(v) is float:
                     acc[metric_name] = v
@@ -74,9 +100,17 @@ class AmbariMetricCollector(object):
 
         return None, None
 
-    def _collect(self, metric_file):
-        with open(metric_file, "r") as read_metric_file:
-            data = json.load(read_metric_file)
+    def _collect(self, metric_file=None):
+        if metric_file:
+            with open(metric_file, "r") as read_metric_file:
+                data = json.load(read_metric_file)
+        else:
+            try:
+                data = self._get_ambari_metrics()
+            except Exception as e:
+                logging.error('Call Ambari API error.\n {}'.format(e))
+
+                return
 
         for item in data['items']:
             if item.get('metrics', None):
@@ -84,27 +118,81 @@ class AmbariMetricCollector(object):
 
                 if metrics:
                     for k, v in metrics.items():
-                        prom_metric = self.prom_metrics.get(k, None)
+                        # prom_metric = self.prom_metrics.get(k, None)
 
-                        if not prom_metric:
-                            prom_metric = GaugeMetricFamily(k, k, labels=['cluster_name', 'component_name', 'host_name'])
-                            self.prom_metrics[k] = prom_metric
+                        # if not prom_metric:
+                        #     prom_metric = GaugeMetricFamily(k, k, labels=['cluster_name', 'component_name', 'host_name'])
+                        #     self.prom_metrics[k] = prom_metric
 
-                        prom_metric.add_metric(list(labels.values()), v)
+                        # prom_metric.add_metric(list(labels.values()), v)
+
+                        statd_key = '{cluster_name}.{component_name}.{host_name}.{m_key}'.format(
+                                cluster_name=labels['cluster_name']
+                                , component_name=labels['component_name']
+                                , host_name=labels['host_name'].replace('.', '-')
+                                , m_key=k
+                            )
+                        self.statsd_metrics[statd_key] = v
 
     def collect(self):
-        self._collect('conf/ambari-metrics-host-component.json')
-        for m in list(self.prom_metrics.values()):
-            yield m
+        if os.getenv('DUMMY_INPUT', 'FALSE') == 'TRUE':
+            # Get dummy json data
+            self._collect(DUMMY_INPUT_FILE)
+        else:
+            logging.info('Start fetching metrics')
+            self._collect()
+            logging.info('Finish fetching metrics')
+
+        # for m in list(self.prom_metrics.values()):
+        #     yield m
+
+        if os.getenv('STD_OUTPUT', 'FALSE') == 'TRUE':
+            for k, v in self.statsd_metrics.items():
+                print k, '=>', v
+        else:
+            logging.info('Send metrics to STATSD')
+            for k, v in self.statsd_metrics.items():
+                try:
+                    statsd.gauge(k, v)
+                except Exception as e:
+                    logging.error('Send metrics to STATSD error.\n {}'.format(e))
+
+    def _get_ambari_metrics(self):
+        """
+        Call Ambari's API to return json data
+        Sample curl
+        curl -k \
+        -u username:password \
+        -H 'X-Requested-By: ambari' \
+        -X GET \
+        "https://localhost:8080/api/v1/clusters/trustingsocial/host_components?fields=metrics/*"
+        """
+
+        ambari_info = self.ambari_info
+
+        return requests.get(
+            '{}/api/v1/clusters/trustingsocial/host_components?fields=metrics/*'.format(ambari_info['AMBARI_URI'])
+            , auth=(ambari_info['AMBARI_USER'], ambari_info['AMBARI_PASS'])
+            , headers={'X-Requested-By': 'ambari'}
+            , verify=False
+        ).json()
 
 
 if __name__ == "__main__":
-    collector = AmbariMetricCollector('conf/black_list.yaml')
+    collector = AmbariMetricCollector(BLACK_LIST_FILE)
     # Just for debug
     # for i in collector.collect():
     #     print(i)
 
-    REGISTRY.register(collector)
-    start_http_server(9999)
-    while True:
-        time.sleep(1)
+    # REGISTRY.register(collector)
+    # start_http_server(9999)
+    # while True:
+    #     time.sleep(1)
+
+    if os.getenv('DEV', 'FALSE') == 'TRUE':
+        collector.collect()
+    else:
+        while True:
+            collector.collect()
+            logging.info('Sleep {} s'.format(str(BATCH_DELAY)))
+            time.sleep(int(BATCH_DELAY))
