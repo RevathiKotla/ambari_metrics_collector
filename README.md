@@ -81,7 +81,7 @@ docker run -d\
  ## Run in PROD
 ### 1. Create `prod.env`
  ```bash
-cp env/sampleprod.env env/prod.env
+cp env/sample.prod.env env/prod.env
 ```
 
 ### 2. Edit `prod.env`
