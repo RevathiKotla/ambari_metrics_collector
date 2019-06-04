@@ -2,7 +2,7 @@ namenode:
     url: http://namenode01.trustiq.local:50070/jmx
     items:
         - name: Hadoop:service=NameNode,name=FSNamesystem
-          black_list:
+          white_list:
             - '.*'
         - name: java.lang:type=Memory
           white_list:
