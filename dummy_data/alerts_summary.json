@@ -1,0 +1,25 @@
+{
+  "href": "https://namenode01.trustiq.local:8080/api/v1/clusters/trustingsocial/alerts?format=summary",
+  "alerts_summary": {
+    "OK": {
+      "count": 139,
+      "original_timestamp": 1559633317186,
+      "maintenance_count": 0
+    },
+    "WARNING": {
+      "count": 0,
+      "original_timestamp": 0,
+      "maintenance_count": 0
+    },
+    "CRITICAL": {
+      "count": 0,
+      "original_timestamp": 1559629171369,
+      "maintenance_count": 3
+    },
+    "UNKNOWN": {
+      "count": 2,
+      "original_timestamp": 1495009041088,
+      "maintenance_count": 0
+    }
+  }
+}

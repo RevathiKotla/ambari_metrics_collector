@@ -20,13 +20,15 @@ try:
 except Exception as e:
     logging.error(e)
 
-DUMMY_INPUT_FILE = os.getenv('DUMMY_INPUT_FILE', 'dummy_data/ambari-metrics-host-component.json')
+DUMMY_INPUT_FILE_NN = os.getenv('DUMMY_INPUT_FILE_NN', 'dummy_data/nn_jmx.json')
+DUMMY_INPUT_FILE_RM = os.getenv('DUMMY_INPUT_FILE_RM', 'dummy_data/rm_metrics.json')
+DUMMY_INPUT_FILE_ALERT = os.getenv('DUMMY_INPUT_FILE_ALERT', 'dummy_data/alerts_summary.json')
 BATCH_DELAY = os.getenv('BATCH_DELAY', 60)
-BLACK_LIST_FILE = 'conf/black_list.yaml'
+CONF_FILE = os.getenv('CONF_FILE', 'conf/components.yaml')
 
 
 class AmbariMetricCollector(object):
-    def __init__(self, black_list_file):
+    def __init__(self, conf_file):
         # self.prom_metrics = {}
         self.statsd_metrics = {}
         self.ambari_info = {
@@ -35,16 +37,28 @@ class AmbariMetricCollector(object):
             , 'AMBARI_PASS': os.getenv('AMBARI_PASS')
         }
 
-        with open(black_list_file, "r") as read_bl_file:
-            bl_conf = yaml.load(read_bl_file)
+        with open(conf_file, "r") as read_conf_file:
+            conf = yaml.load(read_conf_file)
 
-        self.metrics_bl, self.labels_bl = self._parse_black_list(bl_conf)
+        self.conf_nn, self.conf_rm, self.conf_alert = self._parse_conf(conf)
 
-    def _parse_metrics(self, metrics, prefix, acc):
-        for k, v in metrics.items():
+    def _parse_conf(self, conf):
+        conf_nn = conf.get('namenode', None)
+        conf_rm = conf.get('resourcemanager', None)
+        conf_alert = conf.get('ambari_alert', None)
+
+        return conf_nn, conf_rm, conf_alert
+
+    def debug_conf(self):
+        print self.conf_nn
+        print self.conf_rm
+        print self.conf_alert
+
+    def _parse_metrics(self, data, prefix, metrics):
+        for k, v in data.items():
             if type(v) is dict:
                 prefix.append(k)
-                self._parse_metrics(v, prefix, acc)
+                self._parse_metrics(v, prefix, metrics)
                 if len(prefix) > 0:
                     prefix.pop(len(prefix) - 1)
             else:
@@ -52,92 +66,124 @@ class AmbariMetricCollector(object):
                 metric_name = '{}.{}'.format('.'.join(prefix), k)
 
                 if type(v) is int or type(v) is float:
-                    acc[metric_name] = v
+                    metrics[metric_name] = v
 
-    def _is_label_black_list(self, labels, labels_bl):
-        for k, vs in labels_bl.items():
-            label_value = labels.get(k, None)
-            if label_value:
-                for v in vs:
-                    if re.search(v, label_value):
-                        return True
-        return False
+    def _parse_with_filter(self, data, prefix, metrics, conf):
+        new_metrics = {}
+        self._parse_metrics(data, prefix, new_metrics)
 
-    def _filter_metric_in_black_list(self, metrics, metrics_bl):
+        if conf.get('white_list', None):
+            self._filter_metric_in_white_list(new_metrics, conf.get('white_list', None))
+        elif conf.get('black_list', None):
+            self._filter_metric_in_black_list(new_metrics, conf.get('black_list', None))
+
+        metrics.update(new_metrics)
+
+    def _filter_by_rule(self, metrics, rules, is_wl=True):
+        if rules is None:
+            return
+
         remove_metrics = []
-        for bl in metrics_bl:
-            for k, v in metrics.items():
-                if re.search(bl, k):
+        for k, v in metrics.items():
+            if is_wl:
+                remove = True
+                for bl in rules:
+                    if re.search(bl, k):
+                        remove = False
+                        break
+
+                if remove:
                     remove_metrics.append(k)
+            else:
+                for bl in rules:
+                    if re.search(bl, k):
+                        remove_metrics.append(k)
+                        break
 
         for rm in remove_metrics:
-            del metrics[rm]
+            if rm in metrics:
+                del metrics[rm]
 
-        return metrics
+    def _filter_metric_in_black_list(self, metrics, metrics_bl=None):
+        self._filter_by_rule(metrics, metrics_bl, is_wl=False)
 
-    def _parse(self, item, labels_bl, metrics_bl):
-        labels = {'cluster_name': item['HostRoles']['cluster_name'],
-                  'component_name': item['HostRoles']['component_name'],
-                  'host_name': item['HostRoles']['host_name']}
+    def _filter_metric_in_white_list(self, metrics, metrics_wl=None):
+        self._filter_by_rule(metrics, metrics_wl, is_wl=True)
 
-        metrics = {}
-
-        if not self._is_label_black_list(labels, labels_bl):
-            self._parse_metrics(item['metrics'], [], metrics)
-
-        metrics = self._filter_metric_in_black_list(metrics, metrics_bl)
-
-        return labels, metrics
-
-    def _parse_black_list(self, conf):
-        black_list = conf.get('blacklist', None)
-
-        if black_list:
-            labels_black_list = black_list.get('labels', None)
-            metrics_black_list = black_list.get('metric_names', None)
-
-            return metrics_black_list, labels_black_list
-
-        return None, None
-
-    def _collect(self, metric_file=None):
-        if metric_file:
-            with open(metric_file, "r") as read_metric_file:
+    def _collect_ambari_alerts(self, metrics, dummy):
+        if dummy:
+            with open(DUMMY_INPUT_FILE_ALERT, "r") as read_metric_file:
                 data = json.load(read_metric_file)
         else:
             try:
-                data = self._get_ambari_metrics()
+                data = self._call_ambari_api(self.conf_alert['url'])
             except Exception as e:
                 logging.error('Call Ambari API error.\n {}'.format(e))
 
                 return
 
-        for item in data['items']:
-            if item.get('metrics', None):
-                labels, metrics = self._parse(item, self.labels_bl, self.metrics_bl)
+        self._parse_with_filter(data['alerts_summary'], ['ambari_alert'], metrics, self.conf_alert)
 
-                if metrics:
-                    for k, v in metrics.items():
-                        # prom_metric = self.prom_metrics.get(k, None)
+    def _collect_namenode_metrics(self, metrics, dummy):
+        if dummy:
+            with open(DUMMY_INPUT_FILE_NN, "r") as read_metric_file:
+                data = json.load(read_metric_file)
+        else:
+            try:
+                data = self._call_json_api(self.conf_nn['url'])
+            except Exception as e:
+                logging.error('Call Namenode JMX error.\n {}'.format(e))
 
-                        # if not prom_metric:
-                        #     prom_metric = GaugeMetricFamily(k, k, labels=['cluster_name', 'component_name', 'host_name'])
-                        #     self.prom_metrics[k] = prom_metric
+                return
 
-                        # prom_metric.add_metric(list(labels.values()), v)
+        if not self.conf_nn.get('items') or not data.get('beans'):
+            return
 
-                        statd_key = '{cluster_name}.{component_name}.{host_name}.{m_key}'.format(
-                                cluster_name=labels['cluster_name']
-                                , component_name=labels['component_name']
-                                , host_name=labels['host_name'].replace('.', '-')
-                                , m_key=k
-                            )
-                        self.statsd_metrics[statd_key] = v
+        for item in data['beans']:
+            for c_item in self.conf_nn.get('items', []):
+                if c_item['name'] == item['name']:
+                    self._parse_with_filter(item, ['namenode'], metrics, c_item)
+
+    def _collect_resourcemanager_metrics(self, metrics, dummy):
+        if dummy:
+            with open(DUMMY_INPUT_FILE_RM, "r") as read_metric_file:
+                data = json.load(read_metric_file)
+        else:
+            try:
+                data = self._call_json_api(self.conf_rm['url'], headers={'Accept': 'application/json'})
+            except Exception as e:
+                logging.error('Call Resource Manager metrics error.\n {}'.format(e))
+
+                return
+
+        if not data.get('clusterMetrics'):
+            return
+
+        self._parse_with_filter(data['clusterMetrics'], ['resourcemanager'], metrics, self.conf_rm)
+
+    def _collect(self, dummy=False):
+        metrics = {}
+        self._collect_namenode_metrics(metrics, dummy)
+        self._collect_resourcemanager_metrics(metrics, dummy)
+        self._collect_ambari_alerts(metrics, dummy)
+
+        # print json.dumps(metrics, indent=4)
+
+        for k, v in metrics.items():
+            # prom_metric = self.prom_metrics.get(k, None)
+
+            # if not prom_metric:
+            #     prom_metric = GaugeMetricFamily(k, k, labels=['cluster_name', 'component_name', 'host_name'])
+            #     self.prom_metrics[k] = prom_metric
+
+            # prom_metric.add_metric(list(labels.values()), v)
+
+            self.statsd_metrics[k] = v
 
     def collect(self):
         if os.getenv('DUMMY_INPUT', 'FALSE') == 'TRUE':
             # Get dummy json data
-            self._collect(DUMMY_INPUT_FILE)
+            self._collect(dummy=True)
         else:
             logging.info('Start fetching metrics')
             self._collect()
@@ -157,7 +203,7 @@ class AmbariMetricCollector(object):
                 except Exception as e:
                     logging.error('Send metrics to STATSD error.\n {}'.format(e))
 
-    def _get_ambari_metrics(self):
+    def _call_ambari_api(self, url):
         """
         Call Ambari's API to return json data
         Sample curl
@@ -170,16 +216,27 @@ class AmbariMetricCollector(object):
 
         ambari_info = self.ambari_info
 
-        return requests.get(
-            '{}/api/v1/clusters/trustingsocial/host_components?fields=metrics/*'.format(ambari_info['AMBARI_URI'])
+        response = requests.get(
+            url
             , auth=(ambari_info['AMBARI_USER'], ambari_info['AMBARI_PASS'])
             , headers={'X-Requested-By': 'ambari'}
             , verify=False
-        ).json()
+        )
+
+        if response.status_code != requests.codes.ok:
+            return {}
+        return response.json()
+
+    def _call_json_api(self, url, headers={}):
+        response = requests.get(url, headers=headers)
+
+        if response.status_code != requests.codes.ok:
+            return {}
+        return response.json()
 
 
 if __name__ == "__main__":
-    collector = AmbariMetricCollector(BLACK_LIST_FILE)
+    collector = AmbariMetricCollector(CONF_FILE)
     # Just for debug
     # for i in collector.collect():
     #     print(i)
@@ -190,6 +247,7 @@ if __name__ == "__main__":
     #     time.sleep(1)
 
     if os.getenv('DEV', 'FALSE') == 'TRUE':
+        # collector.debug_conf()
         collector.collect()
     else:
         while True:
