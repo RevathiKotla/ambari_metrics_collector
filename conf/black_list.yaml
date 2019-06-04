@@ -1,6 +1,0 @@
-blacklist:
-    metric_names:
-        - cpu.*
-        - jvm.Jvm*
-    labels:
-        component_name: [HISTORYSERVER, JOURNALNODE]

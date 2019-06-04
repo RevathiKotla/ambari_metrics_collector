@@ -1,0 +1,28 @@
+namenode:
+    url: http://namenode01.trustiq.local:50070/jmx
+    items:
+        - name: Hadoop:service=NameNode,name=FSNamesystem
+          black_list:
+            - '.*'
+        - name: java.lang:type=Memory
+          white_list:
+            - HeapMemoryUsage.*
+        - name: Hadoop:service=NameNode,name=FSNamesystemState
+          white_list:
+            - NumLiveDataNodes
+            - NumDeadDataNodes
+            - NumDecomLiveDataNodes
+            - NumDecomDeadDataNodes
+            - VolumeFailuresTotal
+            - EstimatedCapacityLostTotal
+            - NumDecommissioningDataNodes
+            - NumStaleDataNodes
+            - NumStaleStorages
+
+resourcemanager:
+    url: http://namenode01.trustiq.local:8088/ws/v1/cluster/metrics
+
+ambari_alert:
+    url: https://namenode01.trustiq.local:8080/api/v1/clusters/trustingsocial/alerts?format=summary
+    white_list:
+        - '.*\.count'
