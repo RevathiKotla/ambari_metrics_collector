@@ -230,3 +230,39 @@ resourcemanager.totalNodes => 5
 resourcemanager.totalVirtualCores => 720
 resourcemanager.unhealthyNodes => 0
 ```
+
+### 6. Important metrics
+```
+# Capture CRITICAL (alert when > 0)
+ambari_alert.CRITICAL.count => 0
+ambari_alert.WARNING.count => 0
+
+# Compute cluster's storage remain percent  (alert when < 20% or 15%)
+namenode.CapacityRemaining => 85298325045432
+namenode.CapacityRemainingGB => 79440.0
+namenode.CapacityTotal => 225644699156480
+namenode.CapacityTotalGB => 210148.0
+
+# Missing, Corrupt blocks (alert when > 0)
+namenode.CorruptBlocks => 0
+namenode.ExcessBlocks => 0
+namenode.MissingBlocks => 0
+
+# Compute heap usage percent  (alert when > 75% or 80%)
+namenode.HeapMemoryUsage.max => 4241293312
+namenode.HeapMemoryUsage.used => 3022843880
+
+# Datanodes, storages, volumes issues (alert when > 0)
+namenode.NumDeadDataNodes => 0
+namenode.NumStaleDataNodes => 0
+namenode.NumStaleStorages => 0
+namenode.VolumeFailuresTotal => 0
+
+# Yarn resource issues (alert when app pending > 5 or 10 => lack of resource)
+resourcemanager.appsPending => 0
+
+# Yarn nodemanager issues (alert when > 0)
+resourcemanager.lostNodes => 0
+resourcemanager.rebootedNodes => 0
+resourcemanager.unhealthyNodes => 0
+``
